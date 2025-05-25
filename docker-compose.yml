@@ -1,0 +1,9 @@
+version: "3.8"
+
+services:
+  usaf-news-bot:
+    image: usaf-news-bot
+    container_name: usaf-news-bot
+    build: .
+    env_file: .env
+    restart: unless-stopped
