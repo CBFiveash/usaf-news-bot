@@ -1,24 +1,58 @@
 import os
+import json
+import datetime
+from pathlib import Path
+
+import asyncio
+import pytz
+
 import discord
 from discord.ext import commands, tasks
+
 from scrape_usaf import fetch_usaf_rss
-import datetime
-import pytz
-import asyncio
 
 class News(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.posted_links = set()
+        self.posted_links_file = Path("posted_links.json")
+        self.posted_links = self.load_posted_links()
+        self.channel_id = int(os.getenv("DISCORD_CHANNEL_ID"))
         self.aftimes_url = os.getenv("AIR_FORCE_TIMES_RSS")
         self.afmil_url = os.getenv("AF_MIL_RSS")
         self.post_daily_news.start()
+
+    def cog_unload(self):
+        self.post_daily_news.stop()
+        self.save_posted_links()
+
+    def load_posted_links(self):
+        if self.posted_links_file.exists():
+            try:
+                with open(self.posted_links_file, "r") as f:
+                    data = f.read().strip()
+                    if data:
+                        return set(json.loads(data))
+            except json.JSONDecodeError:
+                print("⚠️ posted_links.json is corrupted or empty. Reinitializing...")
+        return set()
+    
+    def save_posted_links(self):
+        with open(self.posted_links_file, "w") as f:
+            json.dump(list(self.posted_links), f)
 
     def build_embed(self, title: str, headlines: list, color: discord.Color) -> discord.Embed:
         embed = discord.Embed(title=title, color=color)
         for title, link in headlines:
             embed.add_field(name=title, value=link, inline=False)
         return embed
+    
+    def get_new_headlines(self, headlines: list) -> list:
+        new_headlines = []
+        for title, link in headlines:
+            if link not in self.posted_links:
+                new_headlines.append((title, link))
+                self.posted_links.add(link)
+        return new_headlines
 
     @commands.command(name="aftimes")
     async def air_force_times(self, ctx):
@@ -61,8 +95,7 @@ class News(commands.Cog):
     async def post_daily_news(self):
         now = datetime.datetime.now(pytz.timezone("US/Pacific"))
         if now.weekday() < 5 and now.hour == 8 and now.minute == 0:  # Monday to Friday, 8 AM PST
-            channel_id = int(os.getenv("DISCORD_CHANNEL_ID"))
-            channel = self.bot.get_channel(channel_id)
+            channel = self.bot.get_channel(self.channel_id)
             if not channel:
                 print("Channel not found!")
                 return
@@ -84,6 +117,7 @@ class News(commands.Cog):
                     embed.add_field(name=title, value=link, inline=False)
 
                 await channel.send(embed=embed)
+                self.save_posted_links()
             else:
                 print("No new headlines to post today.")
 
